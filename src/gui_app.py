@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QFileDialog, QMessageBox, QProgressBar, QFrame
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QPixmap, QFont, QPalette, QColor
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve, QUrl
+from PySide6.QtGui import QPixmap, QFont, QPalette, QColor, QDragEnterEvent, QDropEvent
 
 import torch
 import torch.nn as nn
@@ -18,6 +18,66 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import cv2
 import io
+
+
+class DragDropFrame(QFrame):
+    """Custom frame that accepts drag and drop for images"""
+    file_dropped = Signal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.drag_active = False
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            # Check if any of the URLs are image files
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    file_path = url.toLocalFile()
+                    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif')):
+                        event.acceptProposedAction()
+                        self.drag_active = True
+                        self.update_drag_style(True)
+                        return
+        event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        self.drag_active = False
+        self.update_drag_style(False)
+        event.accept()
+    
+    def dropEvent(self, event: QDropEvent):
+        self.drag_active = False
+        self.update_drag_style(False)
+        
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    file_path = url.toLocalFile()
+                    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif')):
+                        self.file_dropped.emit(file_path)
+                        event.acceptProposedAction()
+                        return
+        event.ignore()
+    
+    def update_drag_style(self, is_dragging):
+        if is_dragging:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #e3f2fd;
+                    border-radius: 12px;
+                    border: 3px dashed #2196f3;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #f8f9fa;
+                    border-radius: 12px;
+                    border: 2px solid #e9ecef;
+                }
+            """)
 
 
 class ModelInferenceThread(QThread):
@@ -329,16 +389,10 @@ class XRayAnalyzerGUI(QMainWindow):
         title.setStyleSheet("color: #495057; margin-bottom: 10px;")
         input_layout.addWidget(title)
         
-        # Image display container
-        image_container = QFrame()
-        image_container.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                border-radius: 12px;
-                border: 2px solid #e9ecef;
-            }
-        """)
+        # Image display container with drag & drop
+        image_container = DragDropFrame()
         image_container.setFixedSize(350, 350)
+        image_container.file_dropped.connect(self.handle_dropped_file)
         
         container_layout = QVBoxLayout(image_container)
         container_layout.setContentsMargins(10, 10, 10, 10)
@@ -350,11 +404,12 @@ class XRayAnalyzerGUI(QMainWindow):
             QLabel {
                 background-color: transparent;
                 color: #6c757d;
-                font-size: 14px;
+                font-size: 12px;
                 border: none;
+                line-height: 1.4;
             }
         """)
-        self.image_label.setText("Upload an X-ray image to begin analysis")
+        self.image_label.setText("📁 Upload an X-ray image\n\n🖱️ Click 'Upload Image' button\nor\n📂 Drag & drop image here")
         container_layout.addWidget(self.image_label)
         
         input_layout.addWidget(image_container)
@@ -490,7 +545,7 @@ class XRayAnalyzerGUI(QMainWindow):
                               "Please ensure the model file exists.")
     
     def upload_image(self):
-        """Handle image upload"""
+        """Handle image upload via button"""
         file_dialog = QFileDialog()
         file_path, _ = file_dialog.getOpenFileName(
             self, "Select X-Ray Image", "", 
@@ -498,22 +553,30 @@ class XRayAnalyzerGUI(QMainWindow):
         )
         
         if file_path:
-            self.image_path = file_path
-            self.display_image(file_path)
-            self.predict_btn.setEnabled(True)
-            self.status_label.setText(f"✅ Image loaded: {Path(file_path).name}")
-            
-            # Clear previous results
-            self.heatmap_label.setText("AI analysis results will appear here")
-            self.heatmap_label.setStyleSheet("""
-                QLabel {
-                    background-color: transparent;
-                    color: #6c757d;
-                    font-size: 14px;
-                    border: none;
-                }
-            """)
-            self.result_label.setText("")
+            self.load_image(file_path)
+    
+    def handle_dropped_file(self, file_path):
+        """Handle image upload via drag & drop"""
+        self.load_image(file_path)
+    
+    def load_image(self, file_path):
+        """Common method to load image from either upload button or drag & drop"""
+        self.image_path = file_path
+        self.display_image(file_path)
+        self.predict_btn.setEnabled(True)
+        self.status_label.setText(f"✅ Image loaded: {Path(file_path).name}")
+        
+        # Clear previous results
+        self.heatmap_label.setText("AI analysis results will appear here")
+        self.heatmap_label.setStyleSheet("""
+            QLabel {
+                background-color: transparent;
+                color: #6c757d;
+                font-size: 14px;
+                border: none;
+            }
+        """)
+        self.result_label.setText("")
     
     def display_image(self, image_path):
         """Display image in the input panel with proper scaling"""
