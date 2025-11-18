@@ -2,6 +2,8 @@ import sys
 import os
 import threading
 from pathlib import Path
+from datetime import datetime
+import shutil
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -18,6 +20,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import cv2
 import io
+import json
 
 
 class DragDropFrame(QFrame):
@@ -245,6 +248,15 @@ class XRayAnalyzerGUI(QMainWindow):
         self.image_path = None
         self.model_path = None
         self.inference_thread = None
+        self.current_prediction = None
+        self.current_confidence = None
+        
+        # Setup feedback directory
+        self.feedback_dir = Path(__file__).parent / "feedback_data"
+        self.feedback_dir.mkdir(exist_ok=True)
+        self.disagreed_dir = self.feedback_dir / "disagreed"
+        self.disagreed_dir.mkdir(exist_ok=True)
+        self.feedback_log = self.feedback_dir / "feedback_log.json"
         
         self.init_ui()
         self.setup_model_path()
@@ -488,6 +500,94 @@ class XRayAnalyzerGUI(QMainWindow):
         """)
         output_layout.addWidget(self.result_label)
         
+        # Feedback section
+        feedback_frame = QFrame()
+        feedback_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border-radius: 10px;
+                border: 1px solid #dee2e6;
+                padding: 15px;
+            }
+        """)
+        feedback_layout = QVBoxLayout(feedback_frame)
+        
+        feedback_title = QLabel("Doctor's Feedback")
+        feedback_title.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        feedback_title.setStyleSheet("color: #6c757d; margin-bottom: 5px;")
+        feedback_title.setAlignment(Qt.AlignCenter)
+        feedback_layout.addWidget(feedback_title)
+        
+        # Feedback buttons
+        buttons_layout = QHBoxLayout()
+        
+        self.agree_btn = QPushButton("✓ I Agree")
+        self.agree_btn.setMinimumHeight(40)
+        self.agree_btn.setFont(QFont("Segoe UI", 10, QFont.Medium))
+        self.agree_btn.setCursor(Qt.PointingHandCursor)
+        self.agree_btn.setEnabled(False)
+        self.agree_btn.clicked.connect(self.on_agree)
+        self.agree_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 16px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #1e7e34;
+            }
+            QPushButton:pressed:enabled {
+                background-color: #155724;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+                color: #adb5bd;
+            }
+        """)
+        buttons_layout.addWidget(self.agree_btn)
+        
+        self.disagree_btn = QPushButton("✗ I Disagree")
+        self.disagree_btn.setMinimumHeight(40)
+        self.disagree_btn.setFont(QFont("Segoe UI", 10, QFont.Medium))
+        self.disagree_btn.setCursor(Qt.PointingHandCursor)
+        self.disagree_btn.setEnabled(False)
+        self.disagree_btn.clicked.connect(self.on_disagree)
+        self.disagree_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: 600;
+                padding: 8px 16px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #c82333;
+            }
+            QPushButton:pressed:enabled {
+                background-color: #bd2130;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+                color: #adb5bd;
+            }
+        """)
+        buttons_layout.addWidget(self.disagree_btn)
+        
+        feedback_layout.addLayout(buttons_layout)
+        
+        self.feedback_status = QLabel("")
+        self.feedback_status.setFont(QFont("Segoe UI", 9))
+        self.feedback_status.setAlignment(Qt.AlignCenter)
+        self.feedback_status.setStyleSheet("color: #6c757d; margin-top: 5px;")
+        self.feedback_status.setWordWrap(True)
+        feedback_layout.addWidget(self.feedback_status)
+        
+        output_layout.addWidget(feedback_frame)
+        
         main_layout.addWidget(output_frame)
     
     def apply_modern_styling(self):
@@ -577,6 +677,13 @@ class XRayAnalyzerGUI(QMainWindow):
             }
         """)
         self.result_label.setText("")
+        
+        # Reset feedback buttons
+        self.agree_btn.setEnabled(False)
+        self.disagree_btn.setEnabled(False)
+        self.feedback_status.setText("")
+        self.current_prediction = None
+        self.current_confidence = None
     
     def display_image(self, image_path):
         """Display image in the input panel with proper scaling"""
@@ -619,6 +726,10 @@ class XRayAnalyzerGUI(QMainWindow):
     def on_prediction_finished(self, heatmap, prediction, confidence):
         """Handle successful prediction completion"""
         try:
+            # Store prediction results
+            self.current_prediction = prediction
+            self.current_confidence = confidence
+            
             # Create heatmap visualization
             original_image = cv2.imread(self.image_path)
             original_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
@@ -688,6 +799,11 @@ class XRayAnalyzerGUI(QMainWindow):
             
             self.status_label.setText("✅ Analysis completed successfully!")
             
+            # Enable feedback buttons
+            self.agree_btn.setEnabled(True)
+            self.disagree_btn.setEnabled(True)
+            self.feedback_status.setText("Please provide your feedback")
+            
         except Exception as e:
             self.on_prediction_error(f"Error displaying results: {str(e)}")
         
@@ -702,6 +818,78 @@ class XRayAnalyzerGUI(QMainWindow):
         self.status_label.setText("❌ Analysis failed! Please try again.")
         self.predict_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
+    
+    def on_agree(self):
+        """Handle 'I Agree' feedback"""
+        if self.image_path and self.current_prediction is not None:
+            self.save_feedback(agreed=True)
+            self.feedback_status.setText("✓ Feedback recorded: Agreed")
+            self.feedback_status.setStyleSheet("color: #28a745; margin-top: 5px; font-weight: bold;")
+            self.agree_btn.setEnabled(False)
+            self.disagree_btn.setEnabled(False)
+    
+    def on_disagree(self):
+        """Handle 'I Disagree' feedback and save image"""
+        if self.image_path and self.current_prediction is not None:
+            try:
+                # Save the disagreed image
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                original_filename = Path(self.image_path).stem
+                extension = Path(self.image_path).suffix
+                
+                # Create filename with prediction info
+                prediction_label = "fracture" if self.current_prediction else "normal"
+                new_filename = f"{timestamp}_{original_filename}_predicted_{prediction_label}{extension}"
+                destination = self.disagreed_dir / new_filename
+                
+                # Copy the image
+                shutil.copy2(self.image_path, destination)
+                
+                # Save feedback
+                self.save_feedback(agreed=False, saved_path=str(destination))
+                
+                self.feedback_status.setText(f"✗ Feedback recorded: Disagreed\nImage saved for review")
+                self.feedback_status.setStyleSheet("color: #dc3545; margin-top: 5px; font-weight: bold;")
+                self.agree_btn.setEnabled(False)
+                self.disagree_btn.setEnabled(False)
+                
+                QMessageBox.information(
+                    self, 
+                    "Feedback Saved", 
+                    f"Thank you for your feedback!\n\nThe image has been saved to:\n{destination}\n\nThis will help improve the model."
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save feedback: {str(e)}")
+    
+    def save_feedback(self, agreed, saved_path=None):
+        """Save feedback to JSON log file"""
+        try:
+            # Load existing feedback log
+            if self.feedback_log.exists():
+                with open(self.feedback_log, 'r') as f:
+                    feedback_data = json.load(f)
+            else:
+                feedback_data = []
+            
+            # Create feedback entry
+            feedback_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "image_path": str(self.image_path),
+                "prediction": "fracture" if self.current_prediction else "normal",
+                "confidence": float(self.current_confidence),
+                "agreed": agreed,
+                "saved_path": saved_path
+            }
+            
+            feedback_data.append(feedback_entry)
+            
+            # Save updated log
+            with open(self.feedback_log, 'w') as f:
+                json.dump(feedback_data, f, indent=2)
+                
+        except Exception as e:
+            print(f"Error saving feedback log: {e}")
 
 
 def main():

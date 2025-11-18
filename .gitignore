@@ -1,1 +1,5 @@
 src/Datasets/*
+
+# Feedback data - contains sensitive medical images and feedback
+src/feedback_data/
+!src/feedback_data/README.md

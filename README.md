@@ -8,6 +8,8 @@ AI-powered bone fracture detection in X-ray images using EfficientNet-B1.
 - Grad-CAM visualization for interpretability
 - User-friendly GUI with drag-and-drop support
 - CLAHE preprocessing for enhanced contrast
+- **Interactive Feedback System**: Doctors can provide feedback with "I Agree" / "I Disagree" buttons
+- **Automatic Data Collection**: Disagreed predictions are saved for model improvement
 
 ## Installation
 
@@ -66,13 +68,54 @@ python -c "import cv2; print(f'OpenCV: {cv2.__version__}')"
 
 ## Quick Start
 
-```bash
-# Train model
-cd src && python EfficientNet_pytorch.py
+### Training the Model
 
-# Run GUI
+```bash
+cd src
+.venv/bin/python EfficientNet_pytorch.py
+```
+
+Or if virtual environment is activated:
+```bash
+cd src
+python EfficientNet_pytorch.py
+```
+
+### Running the GUI
+
+```bash
+.venv/bin/python run_gui.py
+```
+
+Or if virtual environment is activated:
+```bash
+source .venv/bin/activate  # Activate first
 python run_gui.py
 ```
+
+## Feedback System
+
+The GUI includes an interactive feedback system for medical professionals:
+
+1. **Upload and Analyze**: Upload an X-ray image and run AI analysis
+2. **Review Results**: Check the AI prediction and Grad-CAM visualization
+3. **Provide Feedback**: 
+   - Click **"I Agree"** if the prediction is correct
+   - Click **"I Disagree"** if the prediction is incorrect
+4. **Automatic Logging**: 
+   - All feedback is logged to `src/feedback_data/feedback_log.json`
+   - Disagreed cases are automatically saved to `src/feedback_data/disagreed/`
+   - Images are timestamped and labeled with the AI prediction
+
+### Using Feedback Data
+
+Feedback data can be used to:
+- Monitor model performance in real-world scenarios
+- Identify difficult cases or edge scenarios
+- Collect training data for model improvement
+- Calculate expert-validated accuracy metrics
+
+See `src/feedback_data/README.md` for detailed information on analyzing and using feedback data.
 
 ## Model
 
